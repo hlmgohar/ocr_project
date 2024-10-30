@@ -53,6 +53,7 @@ CORS_ALLOW_METHODS = [
     'DELETE',
     'OPTIONS',
 ]
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
 
 MIDDLEWARE = [
