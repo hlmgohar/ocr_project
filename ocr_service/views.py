@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 import spacy
 from spacy.cli import download
 from django.http import FileResponse
+from trtokenizer import SentenceTokenizer
 
 # ABBYY Cloud OCR credentials
 application_id = 'aa8da2ea-0f0b-4de8-b246-2215b67aabcb'
@@ -34,6 +35,7 @@ def load_spacy_model(model_name="en_core_web_sm"):
 
 # Loading spacy models
 nlp = load_spacy_model("en_core_web_sm")
+sentence_tokenizer = SentenceTokenizer()  # Initialize trtokenizer for Turkish
 
 
 def detect_file_type(file_path):
@@ -67,7 +69,8 @@ def submit_file_for_ocr(file, file_type, language):
 
     auth = (application_id, password)
     files = {'file': file}
-    data = {'language': language, 'exportFormat': export_format}
+    text_type = 'normal,handprinted,gothic,typewriter,ocrB'
+    data = {'language': language, 'exportFormat': export_format, 'textType':text_type, 'correctSkew': 'true','correctOrientation':'true', 'imageSource': 'auto'}
     response = requests.post(url, files=files, auth=auth, data=data)
     response.raise_for_status()
     return parse_xml_response(response.text)
@@ -140,14 +143,25 @@ def create_replaced_file(input_path, replaced_output_path):
     
 
 # Function to extract all sentences from a DOCX file, including headers, footers, drawings, etc.
-def extract_sentences_for_translation(docx_path):
+def extract_sentences_for_translation(docx_path, language="turkish"):
     doc = Document(docx_path)
     extracted_sentences = {}
 
-    # Helper function for sentence tokenization using spaCy
+    # Select the appropriate tokenizer based on the language
+    def sent_tokenize(text):
+        if language.lower() == "turkish":
+            return trtokenizer_sent_tokenize(text)  # Use trtokenizer for Turkish
+        else:
+            return spacy_sent_tokenize(text)  # Use spaCy for other languages
+
+    # Function to use spaCy's sentence tokenizer
     def spacy_sent_tokenize(text):
         doc = nlp(text)
-        return [sent.text.strip() for sent in doc.sents]  # Extract sentences from spaCy doc object
+        return [sent.text.replace("^", "").replace("*", "").strip() for sent in doc.sents]
+
+    # Function to use trtokenizer's SentenceTokenizer for Turkish sentence splitting
+    def trtokenizer_sent_tokenize(text):
+        return sentence_tokenizer.tokenize(text)  # Tokenizes text into sentences
 
     # Function to extract text from drawing elements
     def extract_drawing_text(element):
@@ -160,7 +174,7 @@ def extract_sentences_for_translation(docx_path):
 
     # Extract sentences from paragraphs
     for para in doc.paragraphs:
-        sentences = spacy_sent_tokenize(para.text)
+        sentences = sent_tokenize(para.text)
         for sentence in sentences:
             sentence = sentence.strip()
             if sentence and sentence not in extracted_sentences:
@@ -169,7 +183,7 @@ def extract_sentences_for_translation(docx_path):
         # Extract and process any text in drawing elements within the paragraph
         drawing_texts = extract_drawing_text(para._element)
         for text in drawing_texts:
-            sentences = spacy_sent_tokenize(text)
+            sentences = sent_tokenize(text)
             for sentence in sentences:
                 if sentence and sentence not in extracted_sentences:
                     extracted_sentences[sentence] = ""  # Placeholder for translation
@@ -178,7 +192,7 @@ def extract_sentences_for_translation(docx_path):
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
-                sentences = spacy_sent_tokenize(cell.text)
+                sentences = sent_tokenize(cell.text)
                 for sentence in sentences:
                     sentence = sentence.strip()
                     if sentence and sentence not in extracted_sentences:
@@ -187,7 +201,7 @@ def extract_sentences_for_translation(docx_path):
                 # Extract and process any text in drawing elements within the cell
                 drawing_texts = extract_drawing_text(cell._element)
                 for text in drawing_texts:
-                    sentences = spacy_sent_tokenize(text)
+                    sentences = sent_tokenize(text)
                     for sentence in sentences:
                         if sentence and sentence not in extracted_sentences:
                             extracted_sentences[sentence] = ""  # Placeholder for translation
@@ -196,7 +210,7 @@ def extract_sentences_for_translation(docx_path):
     for section in doc.sections:
         header = section.header
         for para in header.paragraphs:
-            sentences = spacy_sent_tokenize(para.text)
+            sentences = sent_tokenize(para.text)
             for sentence in sentences:
                 sentence = sentence.strip()
                 if sentence and sentence not in extracted_sentences:
@@ -205,7 +219,7 @@ def extract_sentences_for_translation(docx_path):
             # Extract and process any text in drawing elements within the header paragraph
             drawing_texts = extract_drawing_text(para._element)
             for text in drawing_texts:
-                sentences = spacy_sent_tokenize(text)
+                sentences = sent_tokenize(text)
                 for sentence in sentences:
                     if sentence and sentence not in extracted_sentences:
                         extracted_sentences[sentence] = ""  # Placeholder for translation
@@ -214,7 +228,7 @@ def extract_sentences_for_translation(docx_path):
     for section in doc.sections:
         footer = section.footer
         for para in footer.paragraphs:
-            sentences = spacy_sent_tokenize(para.text)
+            sentences = sent_tokenize(para.text)
             for sentence in sentences:
                 sentence = sentence.strip()
                 if sentence and sentence not in extracted_sentences:
@@ -223,7 +237,7 @@ def extract_sentences_for_translation(docx_path):
             # Extract and process any text in drawing elements within the footer paragraph
             drawing_texts = extract_drawing_text(para._element)
             for text in drawing_texts:
-                sentences = spacy_sent_tokenize(text)
+                sentences = sent_tokenize(text)
                 for sentence in sentences:
                     if sentence and sentence not in extracted_sentences:
                         extracted_sentences[sentence] = ""  # Placeholder for translation
@@ -262,7 +276,7 @@ class ConvertPDFToDocxAPI(APIView):
 
         # Create replaced DOCX with "Lorem ipsum" content
         create_replaced_file(output_docx_path, replaced_output_docx_path)
-        extracted_sentences = extract_sentences_for_translation(output_docx_path)
+        extracted_sentences = extract_sentences_for_translation(output_docx_path, source_language)
         # Format extracted sentences for frontend
         response_data = format_extracted_sentences(extracted_sentences)
 
