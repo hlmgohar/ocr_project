@@ -43,7 +43,16 @@ INSTALLED_APPS = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    'http://localhost:3000'  # If you are developing with React, for example
+    'http://localhost:3000', 'https://antariksh-frontend-liz4r8i5z-hlmgohars-projects.vercel.app'
+]
+
+CORS_ALLOW_HEADERS = [
+    'authorization',
+    'content-type',
+    'accept',
+    'origin',
+    # Add other headers if necessary
+    'bypass-tunnel-reminder'
 ]
 
 CORS_ALLOW_METHODS = [
@@ -53,21 +62,21 @@ CORS_ALLOW_METHODS = [
     'DELETE',
     'OPTIONS',
 ]
+
+CORS_ALLOW_CREDENTIALS = True
+
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',  # Should be placed at the top
     'django.middleware.security.SecurityMiddleware',
-    "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'corsheaders.middleware.CorsMiddleware',  # Add this line
-    'django.middleware.common.CommonMiddleware',
 ]
 
 ROOT_URLCONF = 'ocr_project.urls'
