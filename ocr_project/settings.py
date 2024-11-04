@@ -43,7 +43,7 @@ INSTALLED_APPS = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    'http://localhost:3000', 'https://antariksh-frontend-liz4r8i5z-hlmgohars-projects.vercel.app'
+    'http://localhost:3000', 'https://antariksh-frontend-liz4r8i5z-hlmgohars-projects.vercel.app', 'big-parents-hope.loca.lt'
 ]
 
 CORS_ALLOW_HEADERS = [
