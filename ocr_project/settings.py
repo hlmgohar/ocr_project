@@ -42,7 +42,7 @@ INSTALLED_APPS = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    'http://localhost:3000', 'https://antariksh-frontend-2l3thwfm3-hlmgohars-projects.vercel.app'
+    'http://localhost:3000', 'https://antariksh-frontend-p6gn18w41-hlmgohars-projects.vercel.app'
 ]
 
 CORS_ALLOW_HEADERS = [
