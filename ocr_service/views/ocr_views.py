@@ -244,13 +244,14 @@ def extract_sentences_for_translation(docx_path, language="turkish"):
 
     return extracted_sentences
 
-# Function to format extracted sentences as [{originalText: "", translatedText: ""}]
+# Function to format extracted sentences as [{id: int, originalText: "", translatedText: ""}]
 def format_extracted_sentences(extracted_sentences):
     formatted_sentences = []
     
-    for sentence in extracted_sentences.keys():
-        # Append the formatted object to the list
+    for idx, sentence in enumerate(extracted_sentences.keys(), start=1):
+        # Append the formatted object with an ID to the list
         formatted_sentences.append({
+            "id": idx,  # Unique ID for each sentence
             "originalText": sentence,
             "translatedText": ""  # Empty string for untranslated text
         })
@@ -270,11 +271,9 @@ class ConvertPDFToDocxAPI(APIView):
 
         output_docx_path = 'design_original_file_name.docx'
         replaced_output_docx_path = 'replaced_design_original_file_name.docx'
-        print(f"source_language{source_language}")
         # Convert PDF to DOCX
         convert_pdf_to_docx(file, output_docx_path, source_language)
 
-        # Create replaced DOCX with "Lorem ipsum" content
         create_replaced_file(output_docx_path, replaced_output_docx_path)
         extracted_sentences = extract_sentences_for_translation(output_docx_path, source_language)
         # Format extracted sentences for frontend

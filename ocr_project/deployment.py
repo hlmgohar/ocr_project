@@ -19,3 +19,16 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': os.environ['AZURE_MYSQL_NAME'],            # Your database name
+        'USER': os.environ['AZURE_MYSQL_USER'],       # Your MySQL username
+        'PASSWORD': os.environ['AZURE_MYSQL_PASSWORD'],   # Your MySQL password
+        'HOST': os.environ['AZURE_MYSQL_HOST'],           # Database host, e.g., localhost or an IP
+    'OPTIONS': {
+            'charset': 'utf8mb4',  # Add this line
+    },
+    }
+}
