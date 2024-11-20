@@ -20,7 +20,7 @@ MIDDLEWARE = [
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.mysql',
+        # 'ENGINE': 'django.db.backends.mysql',
         'NAME': os.environ['AZURE_MYSQL_NAME'],            # Your database name
         'USER': os.environ['AZURE_MYSQL_USER'],       # Your MySQL username
         'PASSWORD': os.environ['AZURE_MYSQL_PASSWORD'],   # Your MySQL password
