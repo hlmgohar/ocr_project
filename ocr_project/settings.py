@@ -105,20 +105,20 @@ WSGI_APPLICATION = 'ocr_project.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'antariksh',            # Your database name
-        'USER': 'root',       # Your MySQL username
-        'PASSWORD': 'Admin125!@%',   # Your MySQL password
-        'HOST': 'localhost',           # Database host, e.g., localhost or an IP
-        'PORT': '3306',                # MySQL default port
-    'OPTIONS': {
-            'charset': 'utf8mb4',  # Add this line
-    },
-    },
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.mysql',
+#         'NAME': 'antariksh',            # Your database name
+#         'USER': 'root',       # Your MySQL username
+#         'PASSWORD': 'Admin125!@%',   # Your MySQL password
+#         'HOST': 'localhost',           # Database host, e.g., localhost or an IP
+#         'PORT': '3306',                # MySQL default port
+#     'OPTIONS': {
+#             'charset': 'utf8mb4',  # Add this line
+#     },
+#     },
 
-}
+# }
 
 
 # Password validation
