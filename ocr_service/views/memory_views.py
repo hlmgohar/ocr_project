@@ -5,8 +5,8 @@ from rest_framework import status
 from lxml import etree
 import pandas as pd
 from ocr_service.models.memory_models import Memory, MemoryAsset
-
-
+from xlsx2csv import Xlsx2csv
+from io import StringIO
 
 class TranslationMemoryUploadAPI(APIView):
     parser_classes = (MultiPartParser, FormParser)
@@ -33,6 +33,8 @@ class TranslationMemoryUploadAPI(APIView):
             name=name,
             target_languages=",".join(target_languages)
         )
+        
+        # memory_asset=9
 
         file_type = file.name.split('.')[-1].lower()
         if file_type not in ['tmx', 'xlsx']:
@@ -100,34 +102,52 @@ class TranslationMemoryUploadAPI(APIView):
             raise ValueError(f"Error processing TMX file: {e}")
 
     def process_xlsx(self, file, source_language, target_languages, name, memory_asset):
-        """Process XLSX file and save translations for multiple target languages."""
+        """Process XLSX file using xlsx2csv and save translations for multiple target languages."""
         try:
-            # Read the Excel file
-            df = pd.read_excel(file, engine='openpyxl')  # Use 'openpyxl' explicitly
+            # Convert XLSX to CSV
+            csv_output = StringIO()
+            Xlsx2csv(file, outputencoding="utf-8").convert(csv_output)
 
-            # Iterate through rows
+            # Load CSV into Pandas DataFrame
+            csv_output.seek(0)
+            df = pd.read_csv(csv_output)
+
+            # Verify columns
+            if source_language not in df.columns:
+                raise ValueError(f"Source language column '{source_language}' not found in the file.")
+            for lang in target_languages:
+                if lang not in df.columns:
+                    raise ValueError(f"Target language column '{lang}' not found in the file.")
+
+            # Process rows
             for index, row in df.iterrows():
-                source_text = row.iloc[0]  # Assuming source text is in the first column
-                target_text = row.iloc[1]  # Assuming target text is in the second column
+                source_text = row.get(source_language)
+                target_texts = {lang: row.get(lang) for lang in target_languages}
 
-                if pd.notna(source_text) and pd.notna(target_text):
-                    # Iterate over each target language
-                    for lang in target_languages:
-                        try:
-                            Memory.objects.create(
-                                name=name,
-                                source_language=source_language,
-                                target_language=lang,
-                                source_text=source_text.strip(),
-                                target_text=target_text.strip(),
-                                memory_asset=memory_asset
-                            )
-                            print(f"Saved Row #{index + 1} for target language {lang}")
-                        except Exception as db_error:
-                            print(f"Error saving row {index + 1} for target language {lang}: {db_error}")
+                source_text = str(source_text).strip() if pd.notna(source_text) else None
+                if source_text:
+                    for lang, target_text in target_texts.items():
+                        target_text = str(target_text).strip() if pd.notna(target_text) else None
+                        if target_text:
+                            try:
+                                Memory.objects.create(
+                                    name=name,
+                                    source_language=source_language,
+                                    target_language=lang,
+                                    source_text=source_text,
+                                    target_text=target_text,
+                                    memory_asset=memory_asset,
+                                )
+                                print(f"Saved Row #{index + 1} for target language '{lang}'")
+                            except Exception as db_error:
+                                print(f"Error saving row #{index + 1} for target language '{lang}': {db_error}")
+                        else:
+                            print(f"Skipping Row #{index + 1} for target language '{lang}': Missing target text")
+                else:
+                    print(f"Skipping Row #{index + 1}: Missing source text")
         except Exception as e:
+            print(f"Error processing XLSX file: {e}")
             raise ValueError(f"Error processing XLSX file: {e}")
-
 
 class MemoryListAPI(APIView):
     def get(self, request, *args, **kwargs):
