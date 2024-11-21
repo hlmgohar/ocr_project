@@ -1,6 +1,6 @@
 from django.urls import path
 from ocr_service.views.ocr_views import ConvertPDFToDocxAPI, DownloadOriginalDocxAPI, DownloadReplacedDocxAPI
-from ocr_service.views.memory_views import TranslationMemoryUploadAPI, MemoryListAPI, MemoryAssetListAPI, MemoryListAPIById
+from ocr_service.views.memory_views import TranslationMemoryUploadAPI, MemoryListAPI, MemoryAssetListAPI, MemoryListAPIById, MemoryDeleteAPI
 
 urlpatterns = [
     path('extract-text/', ConvertPDFToDocxAPI.as_view(), name='convert_pdf_to_docx'),
@@ -14,4 +14,6 @@ urlpatterns = [
     path('memory/upload/', TranslationMemoryUploadAPI.as_view(), name='upload-memory'),
     path('memory/list/', MemoryListAPI.as_view(), name='memory-list'),
     path('memory/list/<int:id>/', MemoryListAPIById.as_view(), name='memory-list'),
+    path('memory/delete/<int:memory_asset_id>/', MemoryDeleteAPI.as_view(), name='delete_memory'),
+
 ]

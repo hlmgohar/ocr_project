@@ -202,3 +202,43 @@ class MemoryAssetListAPI(APIView):
             {"data": list(memories)},
             status=status.HTTP_200_OK
         )
+        
+        
+class MemoryDeleteAPI(APIView):
+    def delete(self, request, *args, **kwargs):
+        # Get the memory_asset_id from the URL parameters
+        memory_asset_id = kwargs.get('memory_asset_id')
+
+        if not memory_asset_id:
+            return Response(
+                {"error": "Memory asset ID is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Delete all related memories
+            deleted_memories_count, _ = Memory.objects.filter(memory_asset_id=memory_asset_id).delete()
+
+            # Delete the memory asset
+            deleted_memory_asset_count, _ = MemoryAsset.objects.filter(id=memory_asset_id).delete()
+
+            if deleted_memories_count == 0 and deleted_memory_asset_count == 0:
+                return Response(
+                    {"message": "No records found for the provided memory asset ID."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            return Response(
+                {
+                    "message": "Memory and memory asset deleted successfully.",
+                    "deleted_memories_count": deleted_memories_count,
+                    "deleted_memory_asset_count": deleted_memory_asset_count,
+                },
+                status=status.HTTP_200_OK
+            )
+
+        except Exception as e:
+            return Response(
+                {"error": f"An error occurred: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
