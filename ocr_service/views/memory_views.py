@@ -242,3 +242,78 @@ class MemoryDeleteAPI(APIView):
                 {"error": f"An error occurred: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+class MemoryUpdateAPI(APIView):
+    def put(self, request, *args, **kwargs):
+        # Retrieve updated rows from the request body
+        updated_rows = request.data.get('updated_rows', [])
+
+        if not updated_rows:
+            return Response(
+                {"error": "No rows provided for update."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        updated_count = 0
+        errors = []
+
+        # Iterate through each row and update the database
+        for row in updated_rows:
+            memory_id = row.get('id')
+            source_text = row.get('source_text')
+            target_text = row.get('target_text')
+
+            if not memory_id or not source_text or not target_text:
+                errors.append(
+                    {"id": memory_id, "error": "Missing required fields (id, source_text, target_text)."}
+                )
+                continue
+
+            try:
+                # Update the Memory record
+                Memory.objects.filter(id=memory_id).update(
+                    source_text=source_text,
+                    target_text=target_text
+                )
+                updated_count += 1
+            except Exception as e:
+                errors.append({"id": memory_id, "error": str(e)})
+
+        response_data = {
+            "message": f"{updated_count} rows updated successfully.",
+            "errors": errors,
+        }
+
+        return Response(response_data, status=status.HTTP_200_OK if updated_count > 0 else status.HTTP_400_BAD_REQUEST)
+
+
+class MemoryBulkDeleteAPI(APIView):
+    def delete(self, request, *args, **kwargs):
+        # Retrieve the list of IDs to delete from the request body
+        memory_ids = request.data.get('memory_ids', [])
+
+        if not memory_ids or not isinstance(memory_ids, list):
+            return Response(
+                {"error": "A list of memory IDs is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Delete the specified Memory records
+            deleted_count, _ = Memory.objects.filter(id__in=memory_ids).delete()
+
+            if deleted_count == 0:
+                return Response(
+                    {"message": "No records found for the provided IDs."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            return Response(
+                {"message": f"{deleted_count} memory records deleted successfully."},
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"An error occurred: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
