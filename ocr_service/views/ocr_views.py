@@ -14,12 +14,20 @@ import spacy
 from spacy.cli import download
 from django.http import FileResponse
 from trtokenizer import SentenceTokenizer
+from ..models import Memory
 
 # ABBYY Cloud OCR credentials
 application_id = 'aa8da2ea-0f0b-4de8-b246-2215b67aabcb'
 password = 'vEhImFfVztzs8k7mqzerFfrL'
 base_url = 'https://cloud-westus.ocrsdk.com'
 # Function to detect if the file is PDF or an image
+
+LANGUAGE_CODES = {
+    "French": "fr",
+    "Arabic": "ar",
+    "Turkish": "tr",
+    "English": "en",
+}
 
 def load_spacy_model(model_name="en_core_web_sm"):
     try:
@@ -55,22 +63,24 @@ def parse_xml_response(response_text):
         return {
             'taskId': task_element.attrib.get('id'),
             'status': task_element.attrib.get('status'),
-            'resultUrl': task_element.attrib.get('resultUrl')
+            'resultUrl': task_element.attrib.get('resultUrl'),
+            'estimatedProcessingTime': task_element.attrib.get('estimatedProcessingTime')
         }
     return None
 
-# Function to submit file to ABBYY OCR (PDF or image)
+# Submit file to ABBYY OCR
 def submit_file_for_ocr(file, file_type, language):
-    if file_type == "pdf" or file_type == "image":
-        url = f'{base_url}/processImage'
-        export_format = "docx"
-    else:
-        return None
-
+    url = f'{base_url}/processImage'
     auth = (application_id, password)
     files = {'file': file}
-    text_type = 'normal,handprinted,gothic,typewriter,ocrB'
-    data = {'language': language, 'exportFormat': export_format, 'textType':text_type, 'correctSkew': 'true','correctOrientation':'true', 'imageSource': 'auto'}
+    data = {
+        'language': language,
+        'exportFormat': 'docx',
+        'textType': 'normal,handprinted,gothic,typewriter,cmc7',
+        'correctSkew': 'true',
+        'correctOrientation': 'true',
+        'imageSource': 'auto'
+    }
     response = requests.post(url, files=files, auth=auth, data=data)
     response.raise_for_status()
     return parse_xml_response(response.text)
@@ -112,56 +122,53 @@ def convert_pdf_to_docx(file, output_docx_path, source_language):
     if ocr_response and 'taskId' in ocr_response:
         get_ocr_result(ocr_response['taskId'], output_docx_path)
 
-# Function to replace all text with "Lorem ipsum" and save to new file
-def create_replaced_file(input_path, replaced_output_path):
+def create_translated_file(input_path, output_path, target_language, source_language):
+    """
+    Translates a Word document's content by replacing text based on memory entries.
+    """
+    def replace_text_in_runs(runs, memory_dict):
+        # Replace text directly using the dictionary for efficiency
+        for run in runs:
+            if run.text in memory_dict:
+                run.text = memory_dict[run.text]
+
+    def replace_text_in_paragraphs(paragraphs, memory_dict):
+        for para in paragraphs:
+            replace_text_in_runs(para.runs, memory_dict)
+
+    def replace_text_in_tables(tables, memory_dict):
+        for table in tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    replace_text_in_paragraphs(cell.paragraphs, memory_dict)
+
+    # Load the document
     doc = Document(input_path)
-    lorem_text = "Lorem ipsum"
+    
+    # Pre-load memory entries into a dictionary for faster lookups
+    memories = Memory.objects.filter(source_language=source_language, target_language=target_language)
+    memory_dict = {memory.source_text: memory.target_text for memory in memories}
 
     # Replace text in paragraphs
-    for para in doc.paragraphs:
-        para.text = lorem_text
+    replace_text_in_paragraphs(doc.paragraphs, memory_dict)
 
     # Replace text in tables
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                cell.text = lorem_text
+    replace_text_in_tables(doc.tables, memory_dict)
 
-    # Replace text in headers
+    # Replace text in headers and footers
     for section in doc.sections:
-        header = section.header
-        for para in header.paragraphs:
-            para.text = lorem_text
+        replace_text_in_paragraphs(section.header.paragraphs, memory_dict)
+        replace_text_in_paragraphs(section.footer.paragraphs, memory_dict)
 
-    # Replace text in footers
-    for section in doc.sections:
-        footer = section.footer
-        for para in footer.paragraphs:
-            para.text = lorem_text
+    # Save the updated document
+    if os.path.exists(output_path):
+        os.remove(output_path)  # Ensure no conflict with an existing file
 
-    doc.save(replaced_output_path)
-    
+    doc.save(output_path)
 
-# Function to extract all sentences from a DOCX file, including headers, footers, drawings, etc.
 def extract_sentences_for_translation(docx_path, language="turkish"):
     doc = Document(docx_path)
-    extracted_sentences = {}
-
-    # Select the appropriate tokenizer based on the language
-    def sent_tokenize(text):
-        if language.lower() == "turkish":
-            return trtokenizer_sent_tokenize(text)  # Use trtokenizer for Turkish
-        else:
-            return spacy_sent_tokenize(text)  # Use spaCy for other languages
-
-    # Function to use spaCy's sentence tokenizer
-    def spacy_sent_tokenize(text):
-        doc = nlp(text)
-        return [sent.text.replace("^", "").replace("*", "").strip() for sent in doc.sents]
-
-    # Function to use trtokenizer's SentenceTokenizer for Turkish sentence splitting
-    def trtokenizer_sent_tokenize(text):
-        return sentence_tokenizer.tokenize(text)  # Tokenizes text into sentences
+    extracted_text = {}
 
     # Function to extract text from drawing elements
     def extract_drawing_text(element):
@@ -172,120 +179,165 @@ def extract_sentences_for_translation(docx_path, language="turkish"):
                     drawing_texts.append(t.text.strip())
         return drawing_texts
 
-    # Extract sentences from paragraphs
+    # Extract text from paragraphs
     for para in doc.paragraphs:
-        sentences = sent_tokenize(para.text)
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if sentence and sentence not in extracted_sentences:
-                extracted_sentences[sentence] = ""  # Placeholder for translation
+        text = para.text.strip()
+        if text and text not in extracted_text:
+            extracted_text[text] = ""  # Placeholder for translation
 
         # Extract and process any text in drawing elements within the paragraph
         drawing_texts = extract_drawing_text(para._element)
         for text in drawing_texts:
-            sentences = sent_tokenize(text)
-            for sentence in sentences:
-                if sentence and sentence not in extracted_sentences:
-                    extracted_sentences[sentence] = ""  # Placeholder for translation
+            if text and text not in extracted_text:
+                extracted_text[text] = ""  # Placeholder for translation
 
-    # Extract sentences from tables
+    # Extract text from tables
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
-                sentences = sent_tokenize(cell.text)
-                for sentence in sentences:
-                    sentence = sentence.strip()
-                    if sentence and sentence not in extracted_sentences:
-                        extracted_sentences[sentence] = ""  # Placeholder for translation
+                text = cell.text.strip()
+                if text and text not in extracted_text:
+                    extracted_text[text] = ""  # Placeholder for translation
 
                 # Extract and process any text in drawing elements within the cell
                 drawing_texts = extract_drawing_text(cell._element)
                 for text in drawing_texts:
-                    sentences = sent_tokenize(text)
-                    for sentence in sentences:
-                        if sentence and sentence not in extracted_sentences:
-                            extracted_sentences[sentence] = ""  # Placeholder for translation
+                    if text and text not in extracted_text:
+                        extracted_text[text] = ""  # Placeholder for translation
 
-    # Extract sentences from headers
+    # Extract text from headers
     for section in doc.sections:
         header = section.header
         for para in header.paragraphs:
-            sentences = sent_tokenize(para.text)
-            for sentence in sentences:
-                sentence = sentence.strip()
-                if sentence and sentence not in extracted_sentences:
-                    extracted_sentences[sentence] = ""  # Placeholder for translation
+            text = para.text.strip()
+            if text and text not in extracted_text:
+                extracted_text[text] = ""  # Placeholder for translation
 
             # Extract and process any text in drawing elements within the header paragraph
             drawing_texts = extract_drawing_text(para._element)
             for text in drawing_texts:
-                sentences = sent_tokenize(text)
-                for sentence in sentences:
-                    if sentence and sentence not in extracted_sentences:
-                        extracted_sentences[sentence] = ""  # Placeholder for translation
+                if text and text not in extracted_text:
+                    extracted_text[text] = ""  # Placeholder for translation
 
-    # Extract sentences from footers
+    # Extract text from footers
     for section in doc.sections:
         footer = section.footer
         for para in footer.paragraphs:
-            sentences = sent_tokenize(para.text)
-            for sentence in sentences:
-                sentence = sentence.strip()
-                if sentence and sentence not in extracted_sentences:
-                    extracted_sentences[sentence] = ""  # Placeholder for translation
+            text = para.text.strip()
+            if text and text not in extracted_text:
+                extracted_text[text] = ""  # Placeholder for translation
 
             # Extract and process any text in drawing elements within the footer paragraph
             drawing_texts = extract_drawing_text(para._element)
             for text in drawing_texts:
-                sentences = sent_tokenize(text)
-                for sentence in sentences:
-                    if sentence and sentence not in extracted_sentences:
-                        extracted_sentences[sentence] = ""  # Placeholder for translation
+                if text and text not in extracted_text:
+                    extracted_text[text] = ""  # Placeholder for translation
 
-    return extracted_sentences
+    return extracted_text
 
-# Function to format extracted sentences as [{id: int, originalText: "", translatedText: ""}]
-def format_extracted_sentences(extracted_sentences):
+def format_extracted_sentences(extracted_sentences, memories):
     formatted_sentences = []
     
     for idx, sentence in enumerate(extracted_sentences.keys(), start=1):
+        # Find the corresponding memory entry for the sentence
+        matching_memory = memories.filter(source_text=sentence).first()
+        
         # Append the formatted object with an ID to the list
         formatted_sentences.append({
             "id": idx,  # Unique ID for each sentence
             "originalText": sentence,
-            "translatedText": ""  # Empty string for untranslated text
+            "translatedText": matching_memory.target_text if matching_memory else ""  # Use target_text if available
         })
     
     return formatted_sentences
 
-# Django API View to convert PDF to DOCX
+# Convert PDF to DOCX API
 class ConvertPDFToDocxAPI(APIView):
     parser_classes = (MultiPartParser, FormParser)
 
     def post(self, request, *args, **kwargs):
         file = request.FILES.get('file')
-        source_language = request.data.get('language', 'English')
+        source_language = request.data.get('sourceLanguage', 'English')
 
         if not file:
             return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
 
-        output_docx_path = 'design_original_file_name.docx'
-        replaced_output_docx_path = 'replaced_design_original_file_name.docx'
-        # Convert PDF to DOCX
-        convert_pdf_to_docx(file, output_docx_path, source_language)
+        file_type = detect_file_type(file.name)
+        if not file_type:
+            return Response({'error': 'Unsupported file type'}, status=status.HTTP_400_BAD_REQUEST)
 
-        create_replaced_file(output_docx_path, replaced_output_docx_path)
-        extracted_sentences = extract_sentences_for_translation(output_docx_path, source_language)
-        # Format extracted sentences for frontend
-        response_data = format_extracted_sentences(extracted_sentences)
+        try:
+            # Submit the file to ABBYY OCR
+            ocr_response = submit_file_for_ocr(file, file_type, source_language)
+            print(ocr_response, 'this is the ocr response')
+            if not ocr_response or 'taskId' not in ocr_response:
+                return Response({'error': 'Failed to process the file'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # Return the formatted extracted sentences as JSON response
-        return Response(response_data, status=200)
+            # Return taskId and estimated processing time
+            return Response({
+                'taskId': ocr_response['taskId'],
+                'estimatedProcessingTime': ocr_response.get('estimatedProcessingTime', '5000')
+            }, status=200)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# Get Task Status API
+class GetTaskStatusAPI(APIView):
+    def get(self, request, *args, **kwargs):
+        task_id = request.query_params.get('taskId')
+        source_language = request.query_params.get('source_language')
+        target_language = request.query_params.get('target_language')  # Corrected typo
+
+        if not task_id:
+            return Response({'error': 'Task ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        url = f'{base_url}/getTaskStatus'
+        auth = (application_id, password)
+        params = {'taskId': task_id}
+
+        # Use LANGUAGE_CODES to map the languages
+        memories = Memory.objects.filter(
+            source_language=LANGUAGE_CODES.get(source_language, 'en'),
+            target_language=LANGUAGE_CODES.get(target_language, 'fr')  # Corrected typo here
+        )
+
+        try:
+            response = requests.get(url, params=params, auth=auth)
+            response.raise_for_status()
+            parsed_response = parse_xml_response(response.text)
+
+            if parsed_response is None:
+                return Response({'error': 'Invalid response from ABBYY'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            status = parsed_response.get('status')
+            if status == 'Completed':
+                # Fetch the result file and process it
+                result_url = parsed_response.get('resultUrl')
+                if not result_url:
+                    return Response({'error': 'Result URL not found'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+                output_docx_path = 'result_file.docx'
+                docx_response = requests.get(result_url)
+                with open(output_docx_path, 'wb') as f:
+                    f.write(docx_response.content)
+
+                # Extract text and format it for frontend
+                extracted_sentences = extract_sentences_for_translation(output_docx_path)
+                response_data = format_extracted_sentences(extracted_sentences, memories)
+                return Response({"data": response_data, "status": status}, status=200)
+
+            return Response({
+                'taskId': parsed_response.get('taskId'),
+                'status': parsed_response.get('status'),
+                'estimatedProcessingTime': parsed_response.get('estimatedProcessingTime')
+            }, status=200)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # API View for downloading the original DOCX document
 class DownloadOriginalDocxAPI(APIView):
     def get(self, request, *args, **kwargs):
-        output_docx_path = 'design_original_file_name.docx'
+        output_docx_path = 'result_file.docx'
         
         # Check if the file exists
         if not os.path.exists(output_docx_path):
@@ -296,16 +348,36 @@ class DownloadOriginalDocxAPI(APIView):
         response['Content-Disposition'] = f'attachment; filename="{os.path.basename(output_docx_path)}"'
         return response
 
-# API View for downloading the replaced DOCX document
+# API View for downloading the translated DOCX document
 class DownloadReplacedDocxAPI(APIView):
     def get(self, request, *args, **kwargs):
-        replaced_output_docx_path = 'replaced_design_original_file_name.docx'
-        
-        # Check if the file exists
-        if not os.path.exists(replaced_output_docx_path):
-            return Response({'error': 'File not found'}, status=status.HTTP_404_NOT_FOUND)
+        # Define paths and parameters
+        output_docx_path = 'result_file.docx'  # Input DOCX file
+        replaced_output_docx_path = 'replaced_design_original_file_name.docx'  # Output DOCX file
 
-        # Return the file as a downloadable attachment
+        # Get target and source languages as human-readable names from query params
+        target_language_name = request.query_params.get('target_language', 'English')  # Default to English
+        source_language_name = request.query_params.get('source_language', 'French')  # Default to French
+
+        # Convert language names to codes using the dictionary
+        target_language = LANGUAGE_CODES.get(target_language_name, 'en')  # Default to 'en' if not found
+        source_language = LANGUAGE_CODES.get(source_language_name, 'fr')  # Default to 'fr' if not found
+
+        # Ensure the input file exists before proceeding
+        if not os.path.exists(output_docx_path):
+            return Response({'error': 'Original file not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Call the create_translated_file function
+        try:
+            create_translated_file(output_docx_path, replaced_output_docx_path, target_language, source_language)
+        except Exception as e:
+            return Response({'error': f'Error generating replaced file: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Check if the replaced file was created successfully
+        if not os.path.exists(replaced_output_docx_path):
+            return Response({'error': 'Replaced file not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Return the replaced file as a downloadable attachment
         response = FileResponse(open(replaced_output_docx_path, 'rb'), as_attachment=True)
         response['Content-Disposition'] = f'attachment; filename="{os.path.basename(replaced_output_docx_path)}"'
         return response
