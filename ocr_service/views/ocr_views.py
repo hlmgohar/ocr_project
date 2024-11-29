@@ -15,6 +15,10 @@ from spacy.cli import download
 from django.http import FileResponse
 from trtokenizer import SentenceTokenizer
 from ..models import Memory
+from ..models import MemoryAsset
+import json
+import openai
+from django.http import JsonResponse
 
 # ABBYY Cloud OCR credentials
 application_id = 'aa8da2ea-0f0b-4de8-b246-2215b67aabcb'
@@ -381,3 +385,81 @@ class DownloadReplacedDocxAPI(APIView):
         response = FileResponse(open(replaced_output_docx_path, 'rb'), as_attachment=True)
         response['Content-Disposition'] = f'attachment; filename="{os.path.basename(replaced_output_docx_path)}"'
         return response
+
+class TranslateRecordsView(APIView):
+    def post(self, request):
+        # Validate required parameters
+        file = request.FILES.get('file')
+        source_language = request.POST.get('source_language')
+        target_language = request.POST.get('target_language')
+        gpt_key = request.POST.get('gptKey')
+
+        if not all([file, source_language, target_language, gpt_key]):
+            return JsonResponse({"error": "Missing file or required parameters."}, status=400)
+
+        # Set the OpenAI API key
+        openai.api_key = gpt_key
+
+        # Process the uploaded file
+        try:
+            file_content = file.read().decode('utf-8')
+            records = json.loads(file_content)
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON format in the uploaded file."}, status=400)
+
+        # Ensure the source and target languages are valid
+        source_language_code = LANGUAGE_CODES.get(source_language)
+        target_language_code = LANGUAGE_CODES.get(target_language)
+        if not source_language_code or not target_language_code:
+            return JsonResponse({"error": "Invalid source or target language."}, status=400)
+
+        # Find or create the MemoryAsset
+        memory_asset, _ = MemoryAsset.objects.get_or_create(
+            source_language=source_language_code,
+            target_languages=target_language_code
+        )
+
+        # Prepare records for translation
+        untranslated_records = [
+            record.get("originalText")
+            for record in records if record.get("originalText")
+        ]
+        if not untranslated_records:
+            return JsonResponse({"error": "No valid records to translate."}, status=400)
+
+        # Batch processing for OpenAI API
+        translated_records = []
+        try:
+            for source_text in untranslated_records:
+                response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": f"You are a professional translator. Translate the following text from {source_language} to {target_language}. If a translation isn't possible or the text doesn't require translation, return it as it is without adding any unrelated content."},
+                        {"role": "user", "content": source_text}
+                    ],
+                    max_tokens=500,
+                )
+                translated_text = response.choices[0].message['content'].strip()
+                translated_records.append({
+                    "source_text": source_text,
+                    "target_text": translated_text,
+                })
+
+                # Save translation in the database
+                Memory.objects.update_or_create(
+                    source_language=source_language_code,
+                    target_language=target_language_code,
+                    source_text=source_text,
+                    defaults={
+                        'target_text': translated_text,
+                        'memory_asset': memory_asset,
+                    }
+                )
+
+        except openai.error.OpenAIError as e:
+            return JsonResponse({"error": f"OpenAI API error: {e}"}, status=500)
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
+
+        # Return translated records
+        return JsonResponse({"translatedRecords": translated_records}, status=200)

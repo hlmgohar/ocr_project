@@ -1,6 +1,6 @@
 from django.urls import path
-from ocr_service.views.ocr_views import ConvertPDFToDocxAPI, DownloadOriginalDocxAPI, DownloadReplacedDocxAPI,GetTaskStatusAPI
-from ocr_service.views.memory_views import TranslationMemoryUploadAPI, MemoryListAPI, MemoryAssetListAPI, MemoryListAPIById, MemoryDeleteAPI, MemoryUpdateAPI, MemoryBulkDeleteAPI
+from ocr_service.views.ocr_views import ConvertPDFToDocxAPI, DownloadOriginalDocxAPI, DownloadReplacedDocxAPI,GetTaskStatusAPI,TranslateRecordsView
+from ocr_service.views.memory_views import TranslationMemoryUploadAPI, MemoryListAPI, MemoryAssetListAPI, MemoryListAPIById, MemoryDeleteAPI, MemoryUpdateAPI, MemoryBulkDeleteAPI, MemoryUpdateAPIBySourceAndTargetLanguage, MemoryExportAPIById
 
 urlpatterns = [
     path('extract-text/', ConvertPDFToDocxAPI.as_view(), name='convert_pdf_to_docx'),
@@ -13,8 +13,12 @@ urlpatterns = [
     path('memory/upload/', TranslationMemoryUploadAPI.as_view(), name='upload-memory'),
     path('memory/list/', MemoryListAPI.as_view(), name='memory-list'),
     path('memory/list/<int:id>/', MemoryListAPIById.as_view(), name='memory-list'),
+    path('memory/assets/export/<int:id>/', MemoryExportAPIById.as_view(), name='memory-list'),
     path('memory/assets/delete/<int:memory_asset_id>/', MemoryDeleteAPI.as_view(), name='delete_memory'),
     path('memory/update/', MemoryUpdateAPI.as_view(), name='memory-update'),
     path('memory/bulk-delete/', MemoryBulkDeleteAPI.as_view(), name='memory-bulk-delete'),
+    path('memory/bulk-update/', MemoryUpdateAPIBySourceAndTargetLanguage.as_view(), name='memory-bulk-update'),
+    
+    path('memory/translation/', TranslateRecordsView.as_view(), name='memory-bulk-translate'),
 
 ]

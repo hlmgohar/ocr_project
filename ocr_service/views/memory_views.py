@@ -6,7 +6,16 @@ from lxml import etree
 import pandas as pd
 from ocr_service.models.memory_models import Memory, MemoryAsset
 from xlsx2csv import Xlsx2csv
+from django.http import HttpResponse
 from io import StringIO
+import csv
+
+LANGUAGE_CODES = {
+    "French": "fr",
+    "Arabic": "ar",
+    "Turkish": "tr",
+    "English": "en",
+}
 
 class TranslationMemoryUploadAPI(APIView):
     parser_classes = (MultiPartParser, FormParser)
@@ -18,24 +27,35 @@ class TranslationMemoryUploadAPI(APIView):
         file = request.FILES.get('file')
 
         # Validate payload
-        if not source_language or not target_languages or not file or not name:
+        if not source_language or not target_languages or not name:
             return Response(
-                {"error": "name, source_language, target_language, and file are required."},
+                {"error": "name, source_language, and target_language are required."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         # Parse target languages
         target_languages = [lang.strip() for lang in target_languages.split(',')]
 
-        # Create a MemoryAsset
-        memory_asset = MemoryAsset.objects.create(
+        # Check if MemoryAsset already exists
+        memory_asset, created = MemoryAsset.objects.get_or_create(
             source_language=source_language,
-            name=name,
-            target_languages=",".join(target_languages)
+            target_languages=",".join(target_languages),
+            defaults={'name': name}
         )
-        
-        # memory_asset=9
 
+        if not created:
+            # Update the name of the existing MemoryAsset
+            memory_asset.name = name
+            memory_asset.save()
+
+        # If no file is provided, only update the MemoryAsset name and return the response
+        if not file:
+            return Response(
+                {"message": "MemoryAsset updated successfully!", "memory_asset_id": memory_asset.id},
+                status=status.HTTP_200_OK
+            )
+
+        # If a file is provided, validate and process it
         file_type = file.name.split('.')[-1].lower()
         if file_type not in ['tmx', 'xlsx']:
             return Response(
@@ -52,10 +72,14 @@ class TranslationMemoryUploadAPI(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        return Response({"message": "Translations saved successfully!", "memory_asset_id": memory_asset.id}, status=status.HTTP_201_CREATED)
+        return Response(
+            {"message": "Translations saved successfully!", "memory_asset_id": memory_asset.id},
+            status=status.HTTP_201_CREATED
+        )
+
 
     def process_tmx(self, file, source_language, target_languages, name, memory_asset):
-        """Process TMX file and save translations for multiple target languages."""
+        """Process TMX file and update or save translations for multiple target languages."""
         try:
             tree = etree.parse(file)
             root = tree.getroot()
@@ -80,17 +104,19 @@ class TranslationMemoryUploadAPI(APIView):
                         elif lang in target_languages:
                             target_texts[lang] = cleaned_text
 
-                # Save translations for each target language
+                # Save or update translations for each target language
                 for lang, target_text in target_texts.items():
                     if source_text and target_text:
                         try:
-                            Memory.objects.create(
+                            Memory.objects.update_or_create(
                                 name=name,
                                 source_language=source_language,
                                 target_language=lang,
                                 source_text=source_text,
-                                target_text=target_text,
-                                memory_asset=memory_asset
+                                defaults={
+                                    'target_text': target_text,
+                                    'memory_asset': memory_asset
+                                }
                             )
                         except Exception as db_error:
                             print(f"Error saving TU #{tu_number} for target language {lang}: {db_error}")
@@ -102,7 +128,7 @@ class TranslationMemoryUploadAPI(APIView):
             raise ValueError(f"Error processing TMX file: {e}")
 
     def process_xlsx(self, file, source_language, target_languages, name, memory_asset):
-        """Process XLSX file using xlsx2csv and save translations for multiple target languages."""
+        """Process XLSX file and update or save translations for multiple target languages."""
         try:
             # Convert XLSX to CSV
             csv_output = StringIO()
@@ -130,17 +156,19 @@ class TranslationMemoryUploadAPI(APIView):
                         target_text = str(target_text).strip() if pd.notna(target_text) else None
                         if target_text:
                             try:
-                                Memory.objects.create(
+                                Memory.objects.update_or_create(
                                     name=name,
                                     source_language=source_language,
                                     target_language=lang,
                                     source_text=source_text,
-                                    target_text=target_text,
-                                    memory_asset=memory_asset,
+                                    defaults={
+                                        'target_text': target_text,
+                                        'memory_asset': memory_asset,
+                                    }
                                 )
-                                print(f"Saved Row #{index + 1} for target language '{lang}'")
+                                print(f"Saved or updated Row #{index + 1} for target language '{lang}'")
                             except Exception as db_error:
-                                print(f"Error saving row #{index + 1} for target language '{lang}': {db_error}")
+                                print(f"Error saving or updating row #{index + 1} for target language '{lang}': {db_error}")
                         else:
                             print(f"Skipping Row #{index + 1} for target language '{lang}': Missing target text")
                 else:
@@ -202,8 +230,8 @@ class MemoryAssetListAPI(APIView):
             {"data": list(memories)},
             status=status.HTTP_200_OK
         )
-        
-        
+
+
 class MemoryDeleteAPI(APIView):
     def delete(self, request, *args, **kwargs):
         # Get the memory_asset_id from the URL parameters
@@ -286,7 +314,134 @@ class MemoryUpdateAPI(APIView):
 
         return Response(response_data, status=status.HTTP_200_OK if updated_count > 0 else status.HTTP_400_BAD_REQUEST)
 
+class MemoryUpdateAPIBySourceAndTargetLanguage(APIView):
+    def put(self, request, *args, **kwargs):
+        # Retrieve `source_language` and `target_language` from the body
+        source_language = request.data.get('source_language')
+        target_language = request.data.get('target_language')
+        updated_rows = request.data.get('updated_rows', [])
 
+        # Validate required fields
+        if not source_language or not target_language:
+            return Response(
+                {"error": "source_language and target_language are required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not updated_rows:
+            return Response(
+                {"error": "No rows provided for update."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        updated_count = 0
+        errors = []
+
+        # Iterate through each row and update the database
+        for row in updated_rows:
+            original_text = row.get('originalText')
+            translated_text = row.get('translatedText')
+
+            # Validate required fields in each row
+            if not original_text or not translated_text:
+                errors.append(
+                    {"error": "Missing required fields (originalText, translatedText).", "row": row}
+                )
+                continue
+
+            try:
+                # Update the Memory record
+                updated_rows_count = Memory.objects.filter(
+                    source_language=LANGUAGE_CODES.get(source_language, 'en'),
+                    target_language=LANGUAGE_CODES.get(target_language, 'fr'),
+                    source_text=original_text
+                ).update(
+                    target_text=translated_text
+                )
+
+                if updated_rows_count > 0:
+                    updated_count += updated_rows_count
+                else:
+                    errors.append(
+                        {"error": "No matching record found for the provided source_language, target_language, and originalText.", "row": row}
+                    )
+            except Exception as e:
+                errors.append({"error": str(e), "row": row})
+
+        response_data = {
+            "message": f"{updated_count} rows updated successfully.",
+            "errors": errors,
+        }
+
+        return Response(
+            response_data,
+            status=status.HTTP_200_OK if updated_count > 0 else status.HTTP_400_BAD_REQUEST
+        )
+
+
+class MemoryExportAPIById(APIView):
+    def get(self, request, *args, **kwargs):
+        # Get the 'id' parameter from the URL
+        memory_id = kwargs.get('id')
+
+        if not memory_id:
+            return Response(
+                {"error": "Memory ID is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Fetch memory records by memory_asset_id
+        try:
+            memory = Memory.objects.filter(memory_asset_id=memory_id).values(
+                'id', 'name', 'source_language', 'target_language', 'source_text', 'target_text'
+            )
+
+            if not memory:
+                return Response(
+                    {"data": []},
+                    status=status.HTTP_200_OK
+                )
+
+            # Check if the request is for export
+            export = request.query_params.get('export', '').lower() == 'true'
+
+            if export:
+                return self.export_to_csv(memory)
+
+            return Response({"data": list(memory)}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {"error": f"An error occurred: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def export_to_csv(self, memory):
+        """Helper method to export memory data to a CSV file."""
+        # Create an in-memory buffer for the CSV
+        buffer = StringIO()
+        writer = csv.writer(buffer)
+        
+        # Write the header row
+        writer.writerow(['ID', 'Name', 'Source Language', 'Target Language', 'Source Text', 'Target Text'])
+
+        # Write the data rows
+        for record in memory:
+            writer.writerow([
+                record['id'],
+                record['name'],
+                record['source_language'],
+                record['target_language'],
+                record['source_text'],
+                record['target_text'],
+            ])
+
+        # Generate the HTTP response with the CSV file
+        response = HttpResponse(buffer.getvalue(), content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="memory_export.csv"'
+        buffer.close()
+
+        return response
+    
 class MemoryBulkDeleteAPI(APIView):
     def delete(self, request, *args, **kwargs):
         # Retrieve the list of IDs to delete from the request body
