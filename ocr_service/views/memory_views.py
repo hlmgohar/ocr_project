@@ -77,7 +77,6 @@ class TranslationMemoryUploadAPI(APIView):
             status=status.HTTP_201_CREATED
         )
 
-
     def process_tmx(self, file, source_language, target_languages, name, memory_asset):
         """Process TMX file and update or save translations for multiple target languages."""
         try:
@@ -91,7 +90,7 @@ class TranslationMemoryUploadAPI(APIView):
                 source_text = None
                 target_texts = {lang: None for lang in target_languages}
 
-                for tuv_number, tuv in enumerate(tu.findall('./tuv'), start=1):  # Translation unit variants
+                for tuv in tu.findall('./tuv'):  # Translation unit variants
                     lang = tuv.attrib.get(f'{{{namespace["xml"]}}}lang')
                     seg = tuv.find('./seg')
 
@@ -104,24 +103,41 @@ class TranslationMemoryUploadAPI(APIView):
                         elif lang in target_languages:
                             target_texts[lang] = cleaned_text
 
-                # Save or update translations for each target language
-                for lang, target_text in target_texts.items():
-                    if source_text and target_text:
-                        try:
-                            Memory.objects.update_or_create(
-                                name=name,
+                # Process source and target text
+                if source_text:
+                    for lang, target_text in target_texts.items():
+                        target_text = target_text.strip() if target_text else None
+
+                        # Ensure no duplicate records; update if existing, otherwise create
+                        if target_text:
+                            existing_record = Memory.objects.filter(
                                 source_language=source_language,
                                 target_language=lang,
-                                source_text=source_text,
-                                defaults={
-                                    'target_text': target_text,
-                                    'memory_asset': memory_asset
-                                }
-                            )
-                        except Exception as db_error:
-                            print(f"Error saving TU #{tu_number} for target language {lang}: {db_error}")
-                    else:
-                        print(f"Skipping TU #{tu_number} for target language {lang}: Missing source or target text")
+                                source_text=source_text
+                            ).first()
+
+                            if existing_record:
+                                # Update existing record
+                                existing_record.target_text = target_text
+                                existing_record.memory_asset = memory_asset
+                                existing_record.name = name
+                                existing_record.save()
+                                print(f"Updated TU #{tu_number} for target language '{lang}'")
+                            else:
+                                # Create a new record
+                                Memory.objects.create(
+                                    name=name,
+                                    source_language=source_language,
+                                    target_language=lang,
+                                    source_text=source_text,
+                                    target_text=target_text,
+                                    memory_asset=memory_asset,
+                                )
+                                print(f"Added TU #{tu_number} for target language '{lang}'")
+                        else:
+                            print(f"Skipping TU #{tu_number} for target language '{lang}': Missing target text")
+                else:
+                    print(f"Skipping TU #{tu_number}: Missing source text")
 
         except Exception as e:
             print(f"Error processing TMX file: {e}")
@@ -154,23 +170,36 @@ class TranslationMemoryUploadAPI(APIView):
                 if source_text:
                     for lang, target_text in target_texts.items():
                         target_text = str(target_text).strip() if pd.notna(target_text) else None
-                        if target_text:
-                            try:
-                                Memory.objects.update_or_create(
+
+                        # Check for existing record
+                        existing_record = Memory.objects.filter(
+                            source_language=source_language,
+                            target_language=lang,
+                            source_text=source_text,
+                        ).first()
+
+                        if existing_record:
+                            # Update existing record
+                            if target_text:
+                                existing_record.target_text = target_text
+                            existing_record.memory_asset = memory_asset
+                            existing_record.name = name
+                            existing_record.save()
+                            print(f"Updated Row #{index + 1} for target language '{lang}'")
+                        else:
+                            # Only create a new record if target_text is provided
+                            if target_text:
+                                Memory.objects.create(
                                     name=name,
                                     source_language=source_language,
                                     target_language=lang,
                                     source_text=source_text,
-                                    defaults={
-                                        'target_text': target_text,
-                                        'memory_asset': memory_asset,
-                                    }
+                                    target_text=target_text,
+                                    memory_asset=memory_asset,
                                 )
-                                print(f"Saved or updated Row #{index + 1} for target language '{lang}'")
-                            except Exception as db_error:
-                                print(f"Error saving or updating row #{index + 1} for target language '{lang}': {db_error}")
-                        else:
-                            print(f"Skipping Row #{index + 1} for target language '{lang}': Missing target text")
+                                print(f"Added Row #{index + 1} for target language '{lang}'")
+                            else:
+                                print(f"Skipping Row #{index + 1} for target language '{lang}': Missing target text")
                 else:
                     print(f"Skipping Row #{index + 1}: Missing source text")
         except Exception as e:
@@ -230,7 +259,6 @@ class MemoryAssetListAPI(APIView):
             {"data": list(memories)},
             status=status.HTTP_200_OK
         )
-
 
 class MemoryDeleteAPI(APIView):
     def delete(self, request, *args, **kwargs):
@@ -314,9 +342,55 @@ class MemoryUpdateAPI(APIView):
 
         return Response(response_data, status=status.HTTP_200_OK if updated_count > 0 else status.HTTP_400_BAD_REQUEST)
 
+class GetMemoryBySource(APIView):
+    def put(self, request, *args, **kwargs):
+        # Retrieve the payload directly from the request body
+        source_text = request.data.get('source_text')
+        target_language = request.data.get('target_language')
+        source_language = request.data.get('source_language')
+
+        # Validate that all required fields are present
+        if not source_text or not target_language or not source_language:
+            return Response(
+                {"error": "Missing required fields (source_text, target_language, source_language)."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        errors = []
+
+        try:
+            # Find the first matching memory record
+            matched_memory = Memory.objects.filter(
+                source_text=source_text,
+                source_language=LANGUAGE_CODES.get(source_language, 'en'),
+                target_language=LANGUAGE_CODES.get(target_language, 'en')
+            ).first()
+
+            # If no record is found, return an empty response (204 No Content)
+            if not matched_memory:
+                return Response(status=status.HTTP_204_NO_CONTENT)
+
+        except Exception as e:
+            errors.append({"error": str(e)})
+
+        # Construct response data if a matched record is found
+        response_data = {
+            "errors": errors,
+            "data": {
+                "id": matched_memory.id if matched_memory else None,
+                "source_text": matched_memory.source_text if matched_memory else None,
+                "target_text": matched_memory.target_text if matched_memory else None,
+                "source_language": matched_memory.source_language if matched_memory else None,
+                "target_language": matched_memory.target_language if matched_memory else None,
+            }
+        }
+
+        # Return a response
+        return Response(response_data, status=status.HTTP_200_OK)
+
 class MemoryUpdateAPIBySourceAndTargetLanguage(APIView):
     def put(self, request, *args, **kwargs):
-        # Retrieve `source_language` and `target_language` from the body
+        # Retrieve `source_language`, `target_language`, and rows to update
         source_language = request.data.get('source_language')
         target_language = request.data.get('target_language')
         updated_rows = request.data.get('updated_rows', [])
@@ -334,15 +408,26 @@ class MemoryUpdateAPIBySourceAndTargetLanguage(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        updated_count = 0
+        # Retrieve the MemoryAsset for the given languages
+        memory_asset = MemoryAsset.objects.filter(
+            source_language=LANGUAGE_CODES.get(source_language, 'en'),
+            target_languages=LANGUAGE_CODES.get(target_language, 'fr'),
+        ).first()
+
+        if not memory_asset:
+            return Response(
+                {"error": "No memory asset found for the provided source_language and target_language."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        processed_records = []
         errors = []
 
-        # Iterate through each row and update the database
+        # Process each row
         for row in updated_rows:
             original_text = row.get('originalText')
             translated_text = row.get('translatedText')
 
-            # Validate required fields in each row
             if not original_text or not translated_text:
                 errors.append(
                     {"error": "Missing required fields (originalText, translatedText).", "row": row}
@@ -350,34 +435,38 @@ class MemoryUpdateAPIBySourceAndTargetLanguage(APIView):
                 continue
 
             try:
-                # Update the Memory record
-                updated_rows_count = Memory.objects.filter(
+                memory, created = Memory.objects.update_or_create(
                     source_language=LANGUAGE_CODES.get(source_language, 'en'),
                     target_language=LANGUAGE_CODES.get(target_language, 'fr'),
-                    source_text=original_text
-                ).update(
-                    target_text=translated_text
+                    source_text=original_text,
+                    defaults={
+                        "target_text": translated_text,
+                        "memory_asset": memory_asset,
+                    },
                 )
-
-                if updated_rows_count > 0:
-                    updated_count += updated_rows_count
-                else:
-                    errors.append(
-                        {"error": "No matching record found for the provided source_language, target_language, and originalText.", "row": row}
-                    )
+                processed_records.append({
+                    "id": memory.id,
+                    "source_language": memory.source_language,
+                    "target_language": memory.target_language,
+                    "source_text": memory.source_text,
+                    "target_text": memory.target_text,
+                    "status": "created" if created else "updated"
+                })
             except Exception as e:
                 errors.append({"error": str(e), "row": row})
 
+        # Prepare the response
         response_data = {
-            "message": f"{updated_count} rows updated successfully.",
+            "message": f"{len([r for r in processed_records if r['status'] == 'updated'])} rows updated and "
+                       f"{len([r for r in processed_records if r['status'] == 'created'])} rows created successfully.",
+            "processed_records": processed_records,
             "errors": errors,
         }
 
         return Response(
             response_data,
-            status=status.HTTP_200_OK if updated_count > 0 else status.HTTP_400_BAD_REQUEST
+            status=status.HTTP_200_OK if processed_records else status.HTTP_400_BAD_REQUEST
         )
-
 
 class MemoryExportAPIById(APIView):
     def get(self, request, *args, **kwargs):
@@ -441,7 +530,87 @@ class MemoryExportAPIById(APIView):
         buffer.close()
 
         return response
-    
+
+class DuplicateMemory(APIView):
+    def post(self, request, memory_asset_id):
+        """
+        Duplicate a memory asset and its associated memory records with a new target language.
+        """
+        try:
+            target_languages_str = request.data.get("target_languages", "")
+
+            # Fetch the original memory asset
+            original_memory_asset = MemoryAsset.objects.filter(id=memory_asset_id).first()
+            if not original_memory_asset:
+                return Response(
+                    {"error": "Memory asset not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Extract and parse target languages from the request
+            if not target_languages_str:
+                return Response(
+                    {"error": "Target languages are required as a comma-separated string"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Convert comma-separated string to a list of target languages
+            target_languages = [lang.strip() for lang in target_languages_str.split(",") if lang.strip()]
+            if not target_languages:
+                return Response(
+                    {"error": "Invalid target languages provided"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Check if a MemoryAsset already exists with the same source_language and target_languages
+            existing_memory_asset = MemoryAsset.objects.filter(
+                source_language=original_memory_asset.source_language,
+                target_languages=target_languages_str,
+            ).first()
+
+            # Use the existing memory asset or create a new one
+            if existing_memory_asset:
+                new_memory_asset = existing_memory_asset
+            else:
+                new_memory_asset = MemoryAsset.objects.create(
+                    name=f"duplicate_{original_memory_asset.name}",
+                    source_language=original_memory_asset.source_language,
+                    target_languages=target_languages_str,
+                )
+
+            # Fetch memory records for the original memory asset
+            memories = Memory.objects.filter(memory_asset=original_memory_asset)
+
+            # Duplicate memory records
+            for memory in memories:
+                for target_language in target_languages:
+                    # Check if a memory record with the same source_text exists
+                    existing_memory = Memory.objects.filter(
+                        memory_asset=new_memory_asset,
+                        source_language=memory.source_language,
+                        target_language=target_language,
+                        source_text=memory.source_text,
+                    ).exists()
+
+                    if not existing_memory:
+                        Memory.objects.create(
+                            memory_asset=new_memory_asset,
+                            source_language=memory.source_language,
+                            target_language=target_language,
+                            source_text=memory.source_text,
+                        )
+
+            return Response(
+                {"message": "Memory asset duplicated successfully"},
+                status=status.HTTP_201_CREATED,
+            )
+
+        except Exception as e:
+            return Response(
+                {"error": f"An error occurred: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
 class MemoryBulkDeleteAPI(APIView):
     def delete(self, request, *args, **kwargs):
         # Retrieve the list of IDs to delete from the request body

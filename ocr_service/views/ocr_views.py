@@ -21,8 +21,8 @@ import openai
 from django.http import JsonResponse
 
 # ABBYY Cloud OCR credentials
-application_id = 'aa8da2ea-0f0b-4de8-b246-2215b67aabcb'
-password = 'vEhImFfVztzs8k7mqzerFfrL'
+application_id = '88bff69a-a1ab-453c-9b8c-1dfdd03de30c'
+password = 'fVXQz2zQlLRktS7gLX9ZiIWo'
 base_url = 'https://cloud-westus.ocrsdk.com'
 # Function to detect if the file is PDF or an image
 
@@ -150,7 +150,10 @@ def create_translated_file(input_path, output_path, target_language, source_lang
     doc = Document(input_path)
     
     # Pre-load memory entries into a dictionary for faster lookups
-    memories = Memory.objects.filter(source_language=source_language, target_language=target_language)
+    memories = Memory.objects.filter(
+        source_language=source_language,
+        target_language=target_language
+    ).exclude(target_text='')
     memory_dict = {memory.source_text: memory.target_text for memory in memories}
 
     # Replace text in paragraphs
@@ -413,12 +416,6 @@ class TranslateRecordsView(APIView):
         if not source_language_code or not target_language_code:
             return JsonResponse({"error": "Invalid source or target language."}, status=400)
 
-        # Find or create the MemoryAsset
-        memory_asset, _ = MemoryAsset.objects.get_or_create(
-            source_language=source_language_code,
-            target_languages=target_language_code
-        )
-
         # Prepare records for translation
         untranslated_records = [
             record.get("originalText")
@@ -432,7 +429,7 @@ class TranslateRecordsView(APIView):
         try:
             for source_text in untranslated_records:
                 response = openai.ChatCompletion.create(
-                    model="gpt-3.5-turbo",
+                    model="gpt-4o-mini",
                     messages=[
                         {"role": "system", "content": f"You are a professional translator. Translate the following text from {source_language} to {target_language}. If a translation isn't possible or the text doesn't require translation, return it as it is without adding any unrelated content."},
                         {"role": "user", "content": source_text}
@@ -443,18 +440,8 @@ class TranslateRecordsView(APIView):
                 translated_records.append({
                     "source_text": source_text,
                     "target_text": translated_text,
+                    "gptGenerated": True  # Add this flag to indicate translation by GPT
                 })
-
-                # Save translation in the database
-                Memory.objects.update_or_create(
-                    source_language=source_language_code,
-                    target_language=target_language_code,
-                    source_text=source_text,
-                    defaults={
-                        'target_text': translated_text,
-                        'memory_asset': memory_asset,
-                    }
-                )
 
         except openai.error.OpenAIError as e:
             return JsonResponse({"error": f"OpenAI API error: {e}"}, status=500)
