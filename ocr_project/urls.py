@@ -1,5 +1,5 @@
 from django.urls import path
-from ocr_service.views.ocr_views import ConvertPDFToDocxAPI, DownloadOriginalDocxAPI, DownloadReplacedDocxAPI,GetTaskStatusAPI,TranslateRecordsView
+from ocr_service.views.ocr_views import ConvertPDFToDocxAPI, DownloadOriginalDocxAPI, DownloadReplacedDocxAPI,GetTaskStatusAPI,TranslateRecordsView, SaveApplicationSettings
 from ocr_service.views.memory_views import TranslationMemoryUploadAPI, MemoryListAPI, MemoryAssetListAPI, MemoryListAPIById, MemoryDeleteAPI, MemoryUpdateAPI, MemoryBulkDeleteAPI, MemoryUpdateAPIBySourceAndTargetLanguage, MemoryExportAPIById, DuplicateMemory, GetMemoryBySource
 
 urlpatterns = [
@@ -22,5 +22,7 @@ urlpatterns = [
     path('memory/translation/', TranslateRecordsView.as_view(), name='memory-bulk-translate'),
     path('memory/duplicate/<int:memory_asset_id>/', DuplicateMemory.as_view(), name='memory-duplicate'),
     
-    path('memory/get-by-source-text/', GetMemoryBySource.as_view(), name='memory-duplicate')
+    path('memory/get-by-source-text/', GetMemoryBySource.as_view(), name='memory-duplicate'),
+    
+    path('memory/settings/', SaveApplicationSettings.as_view(), name='memory-duplicate')
 ]

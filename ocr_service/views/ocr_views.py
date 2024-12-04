@@ -16,6 +16,7 @@ from django.http import FileResponse
 from trtokenizer import SentenceTokenizer
 from ..models import Memory
 from ..models import MemoryAsset
+from ..models import Settings
 import json
 import openai
 from django.http import JsonResponse
@@ -450,3 +451,56 @@ class TranslateRecordsView(APIView):
 
         # Return translated records
         return JsonResponse({"translatedRecords": translated_records}, status=200)
+
+class SaveApplicationSettings(APIView):
+    def get(self, request, *args, **kwargs):
+        """
+        Retrieve the settings and return them.
+        """
+        try:
+            settings = Settings.objects.first()
+            if settings:
+                data = {
+                    "chat_api_key": settings.chat_api_key,
+                    "abby_app_id": settings.abby_app_id,
+                    "abby_password": settings.abby_password,
+                }
+                return JsonResponse(data, status=200)
+            else:
+                return JsonResponse({"message": "No settings found."}, status=404)
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
+
+    def put(self, request, *args, **kwargs):
+        """
+        Update the settings if they exist, or create new settings if none exist.
+        """
+        try:
+            # Parse the JSON body
+            import json
+            body = json.loads(request.body)
+            payload = {key: value.strip() for key, value in body.items() if isinstance(value, str) and value.strip()}
+
+            if not payload:
+                return JsonResponse({"error": "No valid data provided."}, status=400)
+
+            # Check if settings already exist
+            settings = Settings.objects.first()
+
+            if settings:
+                # Update only the fields provided in the payload
+                for key, value in payload.items():
+                    if hasattr(settings, key):
+                        setattr(settings, key, value)
+                settings.save()
+                return JsonResponse({"message": "Settings updated successfully."}, status=200)
+            else:
+                # Create a new settings record
+                settings = Settings(**payload)
+                settings.save()
+                return JsonResponse({"message": "Settings created successfully.", settings: settings}, status=201)
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON format."}, status=400)
+        except Exception as e:
+            print(f"{e}")
+            return JsonResponse({"error": str(e)}, status=500)
