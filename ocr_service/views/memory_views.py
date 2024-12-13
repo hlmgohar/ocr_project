@@ -688,6 +688,7 @@ class DuplicateMemory(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+
 class MemoryBulkDeleteAPI(APIView):
     def delete(self, request, *args, **kwargs):
         # Retrieve the list of IDs to delete from the request body
