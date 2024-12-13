@@ -7,8 +7,14 @@ import pandas as pd
 from ocr_service.models.memory_models import Memory, MemoryAsset
 from xlsx2csv import Xlsx2csv
 from django.http import HttpResponse
-from io import StringIO
 import csv
+from io import BytesIO, StringIO
+import xml.etree.ElementTree as ET
+from openpyxl import Workbook
+from django.db.models.query import QuerySet
+import os
+from django.conf import settings
+
 
 LANGUAGE_CODES = {
     "French": "fr",
@@ -472,7 +478,6 @@ class MemoryExportAPIById(APIView):
     def get(self, request, *args, **kwargs):
         # Get the 'id' parameter from the URL
         memory_id = kwargs.get('id')
-
         if not memory_id:
             return Response(
                 {"error": "Memory ID is required."},
@@ -492,12 +497,15 @@ class MemoryExportAPIById(APIView):
                 )
 
             # Check if the request is for export
-            export = request.query_params.get('export', '').lower() == 'true'
+            export_format = request.query_params.get('type', '').lower()  # 'csv', 'xlsx', or 'tmx'
 
-            if export:
+            if export_format == 'xlsx':
+                return self.export_to_xlsx(memory)
+            elif export_format == 'tmx':
+                return self.export_to_tmx(memory)
+            else:  # Default to CSV
                 return self.export_to_csv(memory)
 
-            return Response({"data": list(memory)}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
                 {"error": f"An error occurred: {str(e)}"},
@@ -505,15 +513,12 @@ class MemoryExportAPIById(APIView):
             )
 
     def export_to_csv(self, memory):
-        """Helper method to export memory data to a CSV file."""
-        # Create an in-memory buffer for the CSV
-        buffer = StringIO()
-        writer = csv.writer(buffer)
-        
-        # Write the header row
+        """Export data to CSV format."""
+        csv_buffer = StringIO()
+        writer = csv.writer(csv_buffer)
+        # Write header
         writer.writerow(['ID', 'Name', 'Source Language', 'Target Language', 'Source Text', 'Target Text'])
-
-        # Write the data rows
+        # Write rows
         for record in memory:
             writer.writerow([
                 record['id'],
@@ -521,16 +526,88 @@ class MemoryExportAPIById(APIView):
                 record['source_language'],
                 record['target_language'],
                 record['source_text'],
-                record['target_text'],
+                record['target_text']
             ])
-
-        # Generate the HTTP response with the CSV file
-        response = HttpResponse(buffer.getvalue(), content_type='text/csv')
+        # Create response
+        response = HttpResponse(csv_buffer.getvalue(), content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="memory_export.csv"'
-        buffer.close()
-
         return response
 
+    def export_to_xlsx(self, memory):
+        """Export data to XLSX format and save the file to the server before returning it."""
+        # Define the directory to save the file (you can change the path as needed)
+        directory = os.path.join(settings.BASE_DIR, 'exports')  # You can change this to any directory
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        # Create the workbook
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Memory Data"
+
+        # Write header
+        headers = ['ID', 'Name', 'Source Language', 'Target Language', 'Source Text', 'Target Text']
+        sheet.append(headers)
+
+        # Write rows
+        for record in memory:
+            row = [
+                record['id'],
+                record['name'],
+                record['source_language'],
+                record['target_language'],
+                record['source_text'],
+                record['target_text']
+            ]
+            print("Writing row:", row)  # Debug: Ensure rows are correct
+            sheet.append(row)
+
+        # Save workbook to a file in the specified directory
+        file_path = os.path.join(directory, 'memory_export.xlsx')
+        workbook.save(file_path)
+
+        # Open and send the file as a response
+        with open(file_path, 'rb') as f:
+            # Prepare the response to download the file
+            response = HttpResponse(
+                f.read(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            response['Content-Disposition'] = 'attachment; filename="memory_export.xlsx"'
+
+        return response
+    def export_to_tmx(self, memory):
+        """Export data to TMX format."""
+        # Create TMX XML structure
+        root = ET.Element("tmx", version="1.4")
+        header = ET.SubElement(root, "header", attrib={
+            "creationtool": "MemoryExportAPI",
+            "creationtoolversion": "1.0",
+            "datatype": "plaintext",
+            "segtype": "sentence",
+            "adminlang": "en-us",
+            "srclang": memory[0]['source_language'] if memory else "en",
+        })
+        body = ET.SubElement(root, "body")
+
+        for record in memory:
+            tu = ET.SubElement(body, "tu")
+            ET.SubElement(tu, "tuv", attrib={"xml:lang": record['source_language']}).append(
+                ET.Element("seg", text=record['source_text'])
+            )
+            ET.SubElement(tu, "tuv", attrib={"xml:lang": record['target_language']}).append(
+                ET.Element("seg", text=record['target_text'])
+            )
+
+        # Convert XML to string
+        tmx_buffer = BytesIO()
+        tree = ET.ElementTree(root)
+        tree.write(tmx_buffer, encoding="utf-8", xml_declaration=True)
+        tmx_buffer.seek(0)
+
+        response = HttpResponse(tmx_buffer.getvalue(), content_type='application/octet-stream')
+        response['Content-Disposition'] = 'attachment; filename="memory_export.tmx"'
+        return response
 class DuplicateMemory(APIView):
     def post(self, request, memory_asset_id):
         """
